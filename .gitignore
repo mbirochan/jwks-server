@@ -1,0 +1,23 @@
+# Binaries and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/jwks-server
+
+# Test and coverage
+coverage.out
+coverage
+*.test
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Go workspace
+go.work
