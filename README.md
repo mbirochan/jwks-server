@@ -1,71 +1,70 @@
-# JWKS Server
+# JWKS Server (Project 2 — SQLite Backed)
 
-A RESTful JSON Web Key Set (JWKS) server implemented in Go. It exposes public keys for JWT verification and an authentication endpoint that issues signed JWTs. The server uses RSA key pairs with key identifiers (`kid`) and expiry timestamps; expired keys are excluded from the JWKS response.
+A RESTful JSON Web Key Set (JWKS) server implemented in Go, backed by a SQLite database for persistent key storage. It exposes public keys for JWT verification and an authentication endpoint that issues signed JWTs using RSA key pairs with key identifiers (`kid`) and expiry timestamps.
 
 ## Overview
 
-- **JWKS endpoint** (`GET /.well-known/jwks.json`): Returns public keys in JWKS format. Only keys that have not expired are included, so clients can verify JWTs using the correct key identified by `kid`.
-- **Auth endpoint** (`POST /auth`): Returns a signed JWT (RS256) with `kid` in the header. Optional query parameter `expired=true` returns a JWT signed with an expired key and with `exp` set in the past.
-
-This project is for educational purposes. In production, key management and authentication would integrate with a proper identity provider and security practices.
+- **SQLite storage** — Private keys are persisted in `totally_not_my_privateKeys.db` using PKCS1 PEM encoding. Keys survive server restarts.
+- **JWKS endpoint** (`GET /.well-known/jwks.json`) — Returns public keys in JWKS format. Only non-expired keys are included.
+- **Auth endpoint** (`POST /auth`) — Returns a signed JWT (RS256) with `kid` in the header. Optional query parameter `expired=true` returns a JWT signed with an expired key. Accepts requests with HTTP Basic auth or JSON body credentials.
+- **SQL injection prevention** — All database queries use parameterized placeholders (`?`).
 
 ## Project Structure
 
 | File | Description |
 |------|-------------|
-| `main.go` | Entry point, server setup, and HTTP listener. Port is configurable via `PORT` (default 8080). |
-| `keys.go` | RSA key generation, key store with thread-safe access, and JWK encoding helpers. |
+| `main.go` | Entry point, server setup, database initialization, and HTTP listener. |
+| `db.go` | SQLite database operations: table creation, key storage/retrieval, PEM serialization. |
+| `keys.go` | RSA key generation (`GenerateKeyPair`) and JWK encoding helpers (`BigEndianBytes`). |
 | `handlers.go` | HTTP handlers for the JWKS and auth endpoints. |
-| `main_test.go` | Unit and handler tests; coverage meets the required threshold. |
+| `main_test.go` | Unit and integration tests using in-memory SQLite; coverage >80%. |
 
 ## Prerequisites
 
-- [Go](https://go.dev/dl/) 1.21 or later, installed and on your `PATH`.
+- [Go](https://go.dev/dl/) 1.21 or later
 
 ## Building and Running
 
-From the project root:
+```bash
+go build -o jwks-server.exe .
+./jwks-server.exe
+```
+
+Or simply:
 
 ```bash
 go run .
 ```
 
-The server listens on **port 8080** by default. To use a different port (e.g. if 8080 is in use):
+The server listens on **port 8080** by default. Override with `PORT` environment variable:
 
-**Windows (PowerShell):**
-```powershell
-$env:PORT="8081"; go run .
-```
-
-**Unix-like (Bash):**
 ```bash
-PORT=8081 go run .
+PORT=9090 go run .
 ```
+
+On startup, the server creates `totally_not_my_privateKeys.db` in the current directory with one valid key (expires in 1 hour) and one expired key (expired 1 hour ago).
+
+## Database Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS keys(
+    kid INTEGER PRIMARY KEY AUTOINCREMENT,
+    key BLOB NOT NULL,
+    exp INTEGER NOT NULL
+)
+```
+
+Private keys are stored as PKCS1 PEM-encoded BLOBs. The `exp` column holds a Unix timestamp.
 
 ## Testing
 
-Run the test suite (verbose: shows each test name and result):
+Run tests with coverage:
 
 ```bash
-go test -v
+go test -v -cover ./...
 ```
 
-Run tests with coverage (single-line summary):
-
-```bash
-go test -cover
-```
-
-Run tests and generate a **detailed coverage report** (table of statements and coverage per function, suitable for screenshots):
-
-```bash
-go test -v -coverprofile=coverage.out
-go tool cover -func coverage.out
-```
-
-On Windows PowerShell, use `go test -v "-coverprofile=coverage.out"` (quotes) so the profile file is created correctly.
-
-The coverage table shows coverage percentage per function and total coverage. The test suite covers key generation and storage, the JWKS endpoint (including exclusion of expired keys and correct JWK fields), the auth endpoint (valid and expired tokens, method restrictions), and server setup. Linting can be run with:
+Lint:
 
 ```bash
 go vet ./...
@@ -73,58 +72,22 @@ go vet ./...
 
 ## API Reference
 
-Base URL: `http://localhost:8080` (or the port you configured).
-
 ### GET /.well-known/jwks.json
 
-Returns a JSON object with a `keys` array. Each key includes `kty`, `use`, `alg`, `kid`, `n`, and `e`. Only non-expired keys are included. Other HTTP methods return `405 Method Not Allowed`.
+Returns a JSON object with a `keys` array containing all non-expired public keys. Each key includes `kty`, `use`, `alg`, `kid`, `n`, and `e`. Other HTTP methods return `405`.
 
 ### POST /auth
 
-Returns a JSON object with a single field `token` containing a signed JWT. The JWT header includes `kid` so verifiers can select the correct key from the JWKS. No request body is required.
+Returns `{"token": "<signed JWT>"}`. The JWT header includes `kid` for key matching.
 
-- **POST /auth** — JWT signed with a valid key; `exp` is in the future.
-- **POST /auth?expired=true** — JWT signed with an expired key; `exp` is in the past.
+- **POST /auth** — JWT signed with a valid key; `exp` in the future.
+- **POST /auth?expired=true** — JWT signed with an expired key; `exp` in the past.
 
-Other HTTP methods return `405 Method Not Allowed`.
-
-## Verifying the Endpoints
-
-Replace `8080` with your port if you set `PORT`.
-
-**Using curl (e.g. Git Bash, WSL, or `curl.exe` in PowerShell):**
-
-```bash
-curl http://localhost:8080/.well-known/jwks.json
-curl -X POST http://localhost:8080/auth
-curl -X POST "http://localhost:8080/auth?expired=true"
-```
-
-**Using PowerShell (Invoke-WebRequest):**
-
-```powershell
-Invoke-WebRequest -Uri "http://localhost:8080/.well-known/jwks.json" -UseBasicParsing | Select-Object -ExpandProperty Content
-Invoke-WebRequest -Uri "http://localhost:8080/auth" -Method POST -UseBasicParsing | Select-Object -ExpandProperty Content
-Invoke-WebRequest -Uri "http://localhost:8080/auth?expired=true" -Method POST -UseBasicParsing | Select-Object -ExpandProperty Content
-```
-
-Expected responses: JWKS with a `keys` array; auth responses with a `token` field containing a JWT string.
+Accepts HTTP Basic auth headers and JSON body credentials without rejecting. Other HTTP methods return `405`.
 
 ## Screenshots
 
 The `screenshots/` directory contains:
 
-- **test-client.png** — The course test client (or equivalent POST to `/auth`) running successfully against the server.
-- **test-coverage.png** — Output of `go test -cover` (or the detailed coverage commands in the Testing section) showing coverage above 80%.
-
-**Identifying information:** Per the assignment, include identifying information on each screenshot (e.g. your name, course, or student ID as required by your instructor).
-
-## Requirements Checklist
-
-A mapping of the assignment requirements to this implementation is provided in **REQUIREMENTS.md**.
-
-## Deliverables (Before You Submit)
-
-1. **GitHub repo** — Push this code to a GitHub repository and provide the link as required.
-2. **Test client screenshot** — In `screenshots/test-client.png`: test client (or POST to `/auth`) running successfully. Include identifying information on the screenshot.
-3. **Test suite screenshot** — In `screenshots/test-coverage.png`: output of `go test -cover` (or the verbose + coverage table commands) showing coverage percent. Include identifying information on the screenshot.
+- **gradebot_test.png** — Gradebot test client output running against the server (Project 2).
+- **test-coverage.png** — Test suite output showing coverage percentage above 80%.

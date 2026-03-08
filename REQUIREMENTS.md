@@ -1,30 +1,34 @@
-# Assignment Requirements Checklist
+# Project 2 Requirements Checklist
 
-This document maps each requirement of *Implementing a Basic JWKS Server* to this repository.
+## SQLite Backed Storage
+- **DB file:** `totally_not_my_privateKeys.db` — created on startup in `main.go`.
+- **Table schema:** `CREATE TABLE IF NOT EXISTS keys(kid INTEGER PRIMARY KEY AUTOINCREMENT, key BLOB NOT NULL, exp INTEGER NOT NULL)` — `db.go`: `NewDatabase()`.
+- **Save private keys to DB:** `db.go`: `StoreKey()` serializes keys as PKCS1 PEM and inserts with parameterized query.
+- **Keys generated on startup:** `main.go`: `SetupMuxWithDB()` generates one valid key (+1hr) and one expired key (-1hr).
 
-## Key Generation
-- **RSA key pair generation** — `keys.go`: `GenerateKeyPair()` (2048-bit RSA).
-- **kid and expiry per key** — `keys.go`: `KeyEntry` has `Kid` and `Expiry`; set in `main.go` and tests.
+## POST /auth
+- **Reads key from DB:** `handlers.go`: `AuthHandler()` calls `s.DB.GetValidKey()` or `s.DB.GetExpiredKey()`.
+- **Unexpired key by default:** `db.go`: `GetValidKey()` — `SELECT ... WHERE exp > ? LIMIT 1`.
+- **Expired key with ?expired=true:** `db.go`: `GetExpiredKey()` — `SELECT ... WHERE exp <= ? LIMIT 1`.
+- **Signs JWT and returns it:** `handlers.go`: RS256 signing with `kid` in header, returns `{"token": "..."}`.
+- **Handles Basic auth and JSON body:** Handler ignores credentials (no validation required), does not reject either format.
 
-## Web Server
-- **Serve HTTP on port 8080** — `main.go`: default `:8080`; `PORT` env overrides.
-- **RESTful JWKS endpoint** — `handlers.go`: GET `/.well-known/jwks.json`, JSON with `keys` array (kty, use, alg, kid, n, e).
-- **Only non-expired keys in JWKS** — `handlers.go`: keys with `Expiry <= now` are excluded.
-- **POST /auth returns signed JWT** — `handlers.go`: POST only; returns `{"token": "<signed JWT>"}` with `kid` in header.
-- **?expired=true → JWT with expired key and past exp** — `handlers.go`: uses `GetExpiredKey()`, sets token `exp` in the past.
+## GET /.well-known/jwks.json
+- **Reads all valid keys from DB:** `db.go`: `GetAllValidKeys()` — `SELECT ... WHERE exp > ?`.
+- **Returns JWKS response:** `handlers.go`: `JWKSHandler()` builds JWK array with kty, use, alg, kid, n, e.
+
+## SQL Injection Prevention
+- **Parameterized queries:** All queries in `db.go` use `?` placeholders — `StoreKey`, `GetValidKey`, `GetExpiredKey`, `GetAllValidKeys`.
 
 ## Documentation / Organization / Linting
-- **Code organized** — `main.go`, `keys.go`, `handlers.go`, `main_test.go`.
-- **Comments where needed** — Doc comments on types and handlers.
-- **Linted** — `go vet ./...` passes.
+- **Code organized:** Separated into `main.go`, `db.go`, `keys.go`, `handlers.go`, `main_test.go`.
+- **Comments:** Doc comments on all exported types, functions, and methods.
+- **Linted:** `go vet ./...` passes cleanly.
 
 ## Tests
-- **Test suite present** — `main_test.go`: TestKeyStore, TestJWKSHandler, TestAuthHandler, TestBigEndianBytes, TestSetupMux.
-- **Coverage over 80%** — `go test -cover` reports >80% (e.g. 85%+).
+- **Test suite:** `main_test.go` — TestDatabase, TestSerializeDeserializeKey, TestJWKSHandler, TestAuthHandler, TestSetupMux, TestGetPort, error path tests.
+- **Coverage:** `go test -cover` reports 82.0% (>80% threshold).
+- **Test isolation:** All tests use in-memory SQLite (`:memory:`), no file cleanup needed.
 
-## Blackbox / Test Client
-- **Test client works** — POST `/auth` with no body returns 200 and a signed JWT.
-
-## kid in JWT and JWKS
-- **JWTs include kid** — `handlers.go`: `token.Header["kid"] = entry.Kid`.
-- **JWKS serves key by kid** — Each JWK has `Kid`; verifiers match JWT header to JWKS key.
+## Blackbox / Gradebot Testing
+- **Gradebot score:** 96.47% — all functional rubric items passed with full marks.

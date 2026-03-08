@@ -26,7 +26,7 @@ type JWKSResponse struct {
 
 // JWKServer holds dependencies for HTTP handlers.
 type JWKServer struct {
-	KeyStore *KeyStore
+	DB *Database
 }
 
 // JWKSHandler handles GET requests to /.well-known/jwks.json and returns
@@ -37,14 +37,14 @@ func (s *JWKServer) JWKSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().Unix()
-	snapshot := s.KeyStore.GetSnapshot()
-	keys := make([]JWK, 0, len(snapshot))
+	entries, err := s.DB.GetAllValidKeys()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	for _, entry := range snapshot {
-		if entry.Expiry <= now {
-			continue
-		}
+	keys := make([]JWK, 0, len(entries))
+	for _, entry := range entries {
 		pub := entry.PublicKey
 		nBytes := pub.N.Bytes()
 		eBytes := BigEndianBytes(pub.E)
@@ -64,6 +64,7 @@ func (s *JWKServer) JWKSHandler(w http.ResponseWriter, r *http.Request) {
 
 // AuthHandler issues a signed JWT on POST. Use query parameter expired=true
 // to receive a JWT signed with an expired key and with exp in the past.
+// Accepts requests with or without credentials (Basic auth header, JSON body).
 func (s *JWKServer) AuthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -72,13 +73,18 @@ func (s *JWKServer) AuthHandler(w http.ResponseWriter, r *http.Request) {
 
 	useExpired := r.URL.Query().Get("expired") == "true"
 	var entry *KeyEntry
+	var err error
 	if useExpired {
-		entry = s.KeyStore.GetExpiredKey()
+		entry, err = s.DB.GetExpiredKey()
 	} else {
-		entry = s.KeyStore.GetValidKey()
+		entry, err = s.DB.GetValidKey()
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 	if entry == nil {
-		http.Error(w, "no key available for signing", http.StatusInternalServerError)
+		http.Error(w, "no key available", http.StatusInternalServerError)
 		return
 	}
 

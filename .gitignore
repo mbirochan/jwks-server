@@ -19,5 +19,8 @@ coverage
 .DS_Store
 Thumbs.db
 
+# Database
+*.db
+
 # Go workspace
 go.work
